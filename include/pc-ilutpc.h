@@ -68,7 +68,7 @@ extern "C" {
 |     All processing is done using C indexing.
 |--------------------------------------------------------------------*/
 int itsol_pc_ilutpC(ITS_SparMat *amat, double *droptol, int *lfil, double permtol,
-		int mband, ITS_ILUTSpar *ilusch);
+		    int mband, ITS_ILUTSpar *ilusch, int udiag);
 
 /*---------------------------------------------------------------------- 
 | ILUT -

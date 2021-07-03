@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 int itsol_pc_lofC(int lofM, ITS_SparMat *csmat, ITS_ILUSpar *lu, FILE *fp); 
-int itsol_pc_ilukC(int lofM, ITS_SparMat *csmat, ITS_ILUSpar *lu, FILE *fp);
+int itsol_pc_ilukC(int lofM, ITS_SparMat *csmat, ITS_ILUSpar *lu, int milu, FILE *fp);
 
 #ifdef __cplusplus
 }

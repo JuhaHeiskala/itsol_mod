@@ -59,16 +59,18 @@
 |----------------------------------------------------------------------- 
 |     All processing is done using C indexing.
 |--------------------------------------------------------------------*/
-int itsol_pc_ilutpC(ITS_SparMat *amat, double *droptol, int *lfil, double permtol, int mband, ITS_ILUTSpar *ilusch)
+int itsol_pc_ilutpC(ITS_SparMat *amat, double *droptol, int *lfil, double permtol, int mband, ITS_ILUTSpar *ilusch, int udiag)
 {
     int i, ii, j, jj, jcol, jpos, jrow, k, *jw = NULL, *jwrev = NULL;
     int len, lenu, lenl, rmax, *iprev = NULL, fil5 = lfil[5], fil6 = lfil[6];
     double tnorm, t, s, fact, *w = NULL, drop5 = droptol[5], drop6 = droptol[6];
-    int rowz, *rowj, imax, icut, *iperm = ilusch->perm2;
+    int rowz, *rowj, imax, icut, *iperm;
     double *rowm, xmax, xmax0, tmp;
     int dec, decnt = 0;
-
+    double milu_sum=0.0;
+ 
     ilusch->n = rmax = amat->n;
+    itsol_setupILUT(ilusch, rmax);
     if (rmax == 0)
         return (0);
     if (rmax > 0) {
@@ -76,6 +78,10 @@ int itsol_pc_ilutpC(ITS_SparMat *amat, double *droptol, int *lfil, double permto
         w = (double *)itsol_malloc(rmax * sizeof(double), "ilutpC:2");
         jwrev = (int *)itsol_malloc(rmax * sizeof(int), "ilutpC:3");
         iprev = (int *)itsol_malloc(rmax * sizeof(int), "ilutpC:4");
+	ilusch->perm2 =  (int *) itsol_malloc(rmax*sizeof(int), "ilutpC:5" );
+	iperm = ilusch->perm2;
+	for (int c1=0;c1<rmax;++c1)
+	  iperm[c1]=c1;
     }
     if (fil5 < 0 || fil6 < 0 || rmax <= 0)
         goto label998;
@@ -90,12 +96,14 @@ int itsol_pc_ilutpC(ITS_SparMat *amat, double *droptol, int *lfil, double permto
         rowj = amat->ja[ii];
         rowm = amat->ma[ii];
         rowz = amat->nzcount[ii];
+	// changed to 2 norm from 1 norm for octave compatibility, Juha Heiskala
         tnorm = 0.0;
         for (k = 0; k < rowz; k++)
-            tnorm += fabs(rowm[k]);
+            tnorm += fabs(rowm[k])*fabs(rowm[k]);
         if (tnorm == 0.0)
             goto label9991;
-        tnorm = tnorm / ((double)rowz);
+        //tnorm = tnorm / ((double)rowz);
+	tnorm = sqrt(tnorm);
         /*---------------------------------------------------------------------
           |     unpack amat in arrays w, jw, jwrev
           |     WE ASSUME THERE IS A DIAGONAL ELEMENT
@@ -128,6 +136,7 @@ int itsol_pc_ilutpC(ITS_SparMat *amat, double *droptol, int *lfil, double permto
           |     eliminate previous rows
           |--------------------------------------------------------------------*/
         len = 0;
+	milu_sum=0.0; 
         for (jj = 0; jj < lenl; jj++) {
             /*---------------------------------------------------------------------
               |    in order to do the elimination in the correct order we must select
@@ -166,7 +175,8 @@ int itsol_pc_ilutpC(ITS_SparMat *amat, double *droptol, int *lfil, double permto
               |--------------------------------------------------------------------*/
             rowm = ilusch->U->ma[jrow];
             fact = w[jj] * rowm[0];
-            if (fabs(fact) > drop5) {   /*  DROPPING IN L  */
+            //if (fabs(fact) > drop5) {   /*  DROPPING IN L  */
+	    if ( fabs(w[jj]) > drop5*tnorm ) {
                 rowj = ilusch->U->ja[jrow];
                 rowz = ilusch->U->nzcount[jrow];
                 /*---------------------------------------------------------------------
@@ -195,8 +205,9 @@ int itsol_pc_ilutpC(ITS_SparMat *amat, double *droptol, int *lfil, double permto
                         /*---------------------------------------------------------------------
                           |     this is not a fill-in element 
                           |--------------------------------------------------------------------*/
-                        else
+                        else {
                             w[jpos] -= s;
+			}
                     }
                     /*---------------------------------------------------------------------
                       |     dealing  with L
@@ -216,8 +227,9 @@ int itsol_pc_ilutpC(ITS_SparMat *amat, double *droptol, int *lfil, double permto
                         /*---------------------------------------------------------------------
                           |     this is not a fill-in element 
                           |--------------------------------------------------------------------*/
-                        else
+                        else {
                             w[jpos] -= s;
+			}
                     }
                 }
                 /*---------------------------------------------------------------------
@@ -226,7 +238,10 @@ int itsol_pc_ilutpC(ITS_SparMat *amat, double *droptol, int *lfil, double permto
                 w[len] = fact;
                 jw[len] = jrow;
                 len++;
-            }
+	}
+	else {
+	   milu_sum+=w[jj];
+	}
         }
         /*---------------------------------------------------------------------
           |     reset nonzero indicators
@@ -310,10 +325,10 @@ int itsol_pc_ilutpC(ITS_SparMat *amat, double *droptol, int *lfil, double permto
         /*
            printf("   length of U = %d  ",len);
            */
-        if (w[ii] == 0.0)
-            w[ii] = (0.0001 + drop6) * tnorm;
-        ilusch->U->ma[ii][0] = 1.0 / w[ii];
-        ilusch->U->ja[ii][0] = ii;
+        if (udiag && w[ii] == 0.0)
+            w[ii] = (drop6) * tnorm;
+        ilusch->U->ma[ii][0] = 1.0 / (w[ii] + milu_sum);
+        ilusch->U->ja[ii][0] = iperm[ii];
         memcpy(&ilusch->U->ma[ii][1], &w[ii + 1], (len - 1) * sizeof(double));
         lenu = 0;
         for (k = ii + 1; k < ii + len; k++)
@@ -332,7 +347,7 @@ int itsol_pc_ilutpC(ITS_SparMat *amat, double *droptol, int *lfil, double permto
         free(jwrev);
         free(iprev);
     }
-    printf("There were %d pivots\n", decnt);
+    //printf("There were %d pivots\n", decnt);
     /*---------------------------------------------------------------------
       |     done  --  correct return
       |--------------------------------------------------------------------*/

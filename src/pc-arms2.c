@@ -377,7 +377,7 @@ int itsol_pc_arms2(ITS_SparMat *Amat, int *ipar, double *droptol, int *lfil, dou
         ilsch->perm2 = (int *)itsol_malloc(nC * sizeof(int), "arms2:ilutpC");
         for (j = 0; j < nC; j++)
             ilsch->perm2[j] = j;
-        ierr = itsol_pc_ilutpC(schur, droptol, lfil, PERMTOL, nC, ilsch);
+        ierr = itsol_pc_ilutpC(schur, droptol, lfil, PERMTOL, nC, ilsch, 0);
     }
 
     /*---------- OPTIMIZATION: NEED TO COMPOUND THE TWO

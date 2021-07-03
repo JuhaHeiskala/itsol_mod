@@ -311,7 +311,7 @@ int itsol_pc_assemble(ITS_SOLVER *s)
         pc->precon = itsol_preconLDU;
     }
     else if (pctype == ITS_PC_ILUK) {
-        ierr = itsol_pc_ilukC(p.iluk_level, s->csmat, pc->ILU, pc->log);
+      ierr = itsol_pc_ilukC(p.iluk_level, s->csmat, pc->ILU, p.milu, pc->log);
 
         if (ierr != 0) {
             fprintf(pc->log, "pc assemble, ILUK error\n");

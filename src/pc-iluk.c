@@ -15,6 +15,7 @@
  *            on format
  * lu       = pointer to a ILUKSpar struct -- see heads.h for details
  *            on format
+ * milu     = whether to calculate modified ilu, 0-> no, 1->row, col not supported
  * fp       = file pointer for error log ( might be stderr )
  *
  * on return:
@@ -32,14 +33,15 @@
  * ======
  * All the diagonals of the input matrix must not be zero
  *--------------------------------------------------------------------------*/
-int itsol_pc_ilukC(int lofM, ITS_SparMat *csmat, ITS_ILUSpar *lu, FILE * fp)
+int itsol_pc_ilukC(int lofM, ITS_SparMat *csmat, ITS_ILUSpar *lu, int milu, FILE * fp)
 {
     int ierr;
     int n = csmat->n;
     int *jw, i, j, k, col, jpos, jrow;
     ITS_SparMat *L, *U;
     double *D;
-
+    double *milu_sum;
+    
     itsol_setupILU(lu, n);
     L = lu->L;
     U = lu->U;
@@ -47,15 +49,20 @@ int itsol_pc_ilukC(int lofM, ITS_SparMat *csmat, ITS_ILUSpar *lu, FILE * fp)
 
     /* symbolic factorization to calculate level of fill index arrays */
     if ((ierr = itsol_pc_lofC(lofM, csmat, lu, fp)) != 0) {
+      if (fp != NULL)
         fprintf(fp, "Error: lofC\n");
-        return -1;
+      return -1;
     }
-
+    if (milu!=0)
+      milu_sum  = (double *) itsol_malloc(n*sizeof(double), "ilutc 13" );
+    
     jw = lu->work;
     /* set indicator array jw to -1 */
-    for (j = 0; j < n; j++)
+    for (j = 0; j < n; j++) {
         jw[j] = -1;
-
+	if (milu != 0)
+	  milu_sum[j] = 0.0;
+    }
     /* beginning of main loop */
     for (i = 0; i < n; i++) {
         /* set up the i-th row accroding to the nonzero information from
@@ -98,8 +105,12 @@ int itsol_pc_ilukC(int lofM, ITS_SparMat *csmat, ITS_ILUSpar *lu, FILE * fp)
             for (k = 0; k < U->nzcount[jrow]; k++) {
                 col = U->ja[jrow][k];
                 jpos = jw[col];
-                if (jpos == -1)
-                    continue;
+                if (jpos == -1) {
+		  if (milu != 0 && col != i)
+		    milu_sum[i] += L->ma[i][j] * U->ma[jrow][k];
+		  continue;
+		}
+
                 if (col < i)
                     L->ma[i][jpos] -= L->ma[i][j] * U->ma[jrow][k];
                 else if (col == i)
@@ -125,13 +136,19 @@ int itsol_pc_ilukC(int lofM, ITS_SparMat *csmat, ITS_ILUSpar *lu, FILE * fp)
                 L->ma[j] = NULL;
                 U->ma[j] = NULL;
             }
-            fprintf(fp, "fatal error: Zero diagonal found...\n");
+	    if (fp != NULL)
+	      fprintf(fp, "fatal error: Zero diagonal found...\n");
             return -2;
         }
-        D[i] = 1.0 / D[i];
+	if (milu != 0)
+	  D[i] = 1.0 / (D[i] - milu_sum[i]);
+	else
+	  D[i] = 1.0 / D[i];
     }
 
-    return 0;
+   if (milu != 0)
+      free(milu_sum);
+   return 0;
 }
 
 /*--------------------------------------------------------------------

@@ -263,7 +263,7 @@ typedef struct ITS_PARS_
     int ilut_p;                 /* ilut fill                    */
     double ilut_tol;            /* ilut drop tolerance          */
     int iluk_level;             /* level of fill for ILUK  */
-
+    int milu;                     /* modified ILU, added to original ITSOL  */
     /* vbilu value always set to 1           */
     int perm_type;               /* indset perms (0) or PQ perms (1)*/
     int Bsize;                   /* block size - dual role */

@@ -7,11 +7,11 @@
 #define NZ_DIAG 1               /* whether or not to replace zero diagonal    */
                           /* entries by small terms                     */
 #define DELAY_DIAG_UPD 1        /* whether to update diagonals AFTER dropping */
-#define BLEND 0.1               /* defines how to blend dropping by diagonal  */
+#define BLEND 0.0               /* defines how to blend dropping by diagonal  */
                 /* and other strategies. Element is always dropped when */
                 /* (for Lij) : Lij < B*tol*D[i]+(1-B)*Norm (inv(L)*e_k) */
 static int Lnnz, *Lfirst, *Llist, *Lid, Unnz, *Ufirst, *Ulist, *Uid;
-static double Mnorm, *wL, *wU, *w, *D;
+static double Mnorm, *wL, *wU, *w, *D, *milu_csum, *milu_rsum, *mt_u_norm;
 static ITS_SparMat *L;
 static ITS_SparMat *U;
 
@@ -22,7 +22,7 @@ static int update_diagonals(ITS_ILUSpar *lu, int i)
 {
     double *diag = lu->D, scale = diag[i];
     /* By using the expansion arrays, only the shorter one of L(k) and U(k)
-     * need to be scaned, so the time complexity = O(min(Lnnz,Unnz)) */
+     * need to be scaled, so the time complexity = O(min(Lnnz,Unnz)) */
     int j, id;
 
     if (Lnnz < Unnz) {
@@ -73,7 +73,7 @@ static int comp(const void *fst, const void *snd)
  *  U(i,j) is dropped if | U(i,j) | < toldiag*BLEND + tolU*(1-BLEND) 
  * 
  *---------------------------------------------------------------------*/
-static int std_drop(int lfil, int i, double tolL, double tolU, double toldiag)
+static int std_drop(int lfil, int i, double tolL, double tolU, double toldiag, int milu)
 {
     int j, len, col, row, ipos;
     int *ia = NULL, *ja = NULL;
@@ -88,8 +88,13 @@ static int std_drop(int lfil, int i, double tolL, double tolU, double toldiag)
         col = Uid[j];
         if (fabs(wU[col]) > tolU)
             Uid[len++] = col;
-        else
-            Ufirst[col] = 0;
+        else {
+	  Ufirst[col] = 0;
+	  if (milu==1) // row option
+	    milu_rsum[i] += wU[col];
+	  else if (milu==2) // column option
+	    milu_rsum[col] += wU[col];
+	}
     }
     /*-------------------- find the largest lfil elements in row k */
     Unnz = len;
@@ -120,8 +125,13 @@ static int std_drop(int lfil, int i, double tolL, double tolU, double toldiag)
         row = Lid[j];
         if (fabs(wL[row]) > tolL)
             Lid[len++] = row;
-        else
-            Lfirst[row] = 0;
+        else {
+	  Lfirst[row] = 0;
+	  if (milu==1) // row option
+	    milu_csum[row] += wL[row];
+	  else if (milu==2)
+	    milu_csum[i] += wL[row];
+	}
     }
     /*-------------------- find the largest lfil elements in column k         */
     Lnnz = len;
@@ -140,7 +150,10 @@ static int std_drop(int lfil, int i, double tolL, double tolU, double toldiag)
     for (j = 0; j < len; j++) {
         ipos = Lid[j];
         ia[j] = ipos;
-        ma[j] = wL[ipos] * t;
+     	if (milu == 0) // scaling by t done here as original ITSOL code, Juha Heiskala
+	  ma[j] = wL[ipos]*t;
+	else if (milu >0) // scaling delayed until row/column sum is added to the diagonal for MILU, Juha Heiskala
+	  ma[j] = wL[ipos];
     }
     for (j = len; j < Lnnz; j++) {
         Lfirst[Lid[j]] = 0;     /* important: otherwise, delay_update_diagonals may
@@ -249,7 +262,7 @@ static int std_drop(int lfil, int i, double tolL, double tolU, double toldiag)
  * Ulist(n)   Ulist(j) points to a linked list of rows that will update the
  *            j-th column in L part
  *----------------------------------------------------------------------*/
-int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int drop, FILE * fp)
+int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int drop, int milu, FILE * fp)
 {
     int n = mt->n, i, j, k;
     int lfst, ufst, row, col, newrow, newcol, iptr;
@@ -261,8 +274,9 @@ int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int d
     double *eU = NULL;          /* to estimate the norm of k-th col of U^{-1} */
     /*-----------------------------------------------------------------------*/
     if (lfil < 0) {
+      if (fp != NULL)
         fprintf(fp, "ilutc: Illegal value for lfil.\n");
-        return -1;
+      return -1;
     }
 
     itsol_setupILU(lu, n);
@@ -285,6 +299,12 @@ int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int d
         eU = (double *)itsol_malloc(n * sizeof(double), "ilutc 12");
     }
 
+    // Modified ILU option added to original ITSOL2, Juha Heiskala
+    if (milu>0) {
+      milu_csum  = (double *)itsol_malloc(n*sizeof(double), "ilutc 13" );
+      milu_rsum  = (double *)itsol_malloc(n*sizeof(double), "ilutc 14" );
+    }
+    mt_u_norm  = (double *)itsol_malloc(n*sizeof(double), "ilutc 15" );
     /*-------------------- initialize a few things */
     for (i = 0; i < n; i++) {
         D[i] = mt->D[i];
@@ -300,6 +320,11 @@ int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int d
             eL[i] = 0.0;
             eU[i] = 0.0;
         }
+       if (milu>0) {
+	 milu_csum[i] = 0.0;
+	 milu_rsum[i] = 0.0;
+       }
+       mt_u_norm[i] = 0.0;
     }
 
     /*-------------------- main loop ------------*/
@@ -408,14 +433,15 @@ int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int d
         Mnorm = (tLnorm + tUnorm) / (Lnnz + Unnz);
         if (D[i] == 0) {
             if (!NZ_DIAG) {
+	      if (fp != NULL)
                 fprintf(fp, "zero diagonal encountered.\n");
-                for (j = i; j < n; j++) {
-                    L->ja[j] = NULL;
-                    L->ma[j] = NULL;
-                    U->ja[j] = NULL;
-                    U->ma[j] = NULL;
-                }
-                return -2;
+	      for (j = i; j < n; j++) {
+		L->ja[j] = NULL;
+		L->ma[j] = NULL;
+		U->ja[j] = NULL;
+		U->ma[j] = NULL;
+	      }
+	      return -2;
             }
             else {
                 D[i] = (1.0e-4 + tol) * Mnorm;
@@ -434,7 +460,7 @@ int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int d
         /*-------------------- call different dropping funcs according to 'drop' */
         /*-------------------- drop = 0                                          */
         if (drop == 0) {
-            std_drop(lfil, i, toldiag, toldiag, 0.0);
+	  std_drop(lfil, i, toldiag, toldiag, 0.0, milu);
             /*-------------------- drop = 1                                          */
         }
         else if (drop == 1) {
@@ -450,14 +476,14 @@ int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int d
             Lnorm *= tol;
             Unorm /= (1.0 + Unnz);
             Unorm *= tol;
-            std_drop(lfil, i, Lnorm, Unorm, 0.0);
+            std_drop(lfil, i, Lnorm, Unorm, 0.0, milu);
             /*-------------------- drop = 2                                          */
         }
         else if (drop == 2) {
             Lnorm = tol * diag / its_max(1, fabs(eL[i]));
             eU[i] *= D[i];
             Unorm = tol / its_max(1, fabs(eU[i]));
-            std_drop(lfil, i, Lnorm, Unorm, toldiag);
+            std_drop(lfil, i, Lnorm, Unorm, toldiag, milu);
             /*-------------------- update eL[i+1,...,n] and eU[i+1,...,n]            */
             t = eL[i] * D[i];
             for (j = 0; j < Lnnz; j++) {
@@ -487,7 +513,7 @@ int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int d
             eU[i] *= D[i];
             Lnorm = tol * diag / its_max(1, fabs(eL[i]));
             Unorm = tol / its_max(1, fabs(eU[i]));
-            std_drop(lfil, i, Lnorm, Unorm, toldiag);
+            std_drop(lfil, i, Lnorm, Unorm, toldiag, milu);
             /*-------------------- update eL[i+1,...,n] and eU[i+1,...,n] */
             t = eL[i] * D[i];
             for (j = 0; j < Lnnz; j++) {
@@ -542,7 +568,7 @@ int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int d
                 eU[i] = x2;
             }
             Unorm = tol / its_max(1, fabs(eU[i]));
-            std_drop(lfil, i, Lnorm, Unorm, toldiag);
+            std_drop(lfil, i, Lnorm, Unorm, toldiag, milu);
             /*-------------------- update eL[i+1,...,n] and eU[i+1,...,n] */
             t = eL[i] * D[i];
             for (j = 0; j < Lnnz; j++) {
@@ -555,10 +581,37 @@ int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int d
                 eU[col] += wU[col] * t;
             }
         }
+	/*-------------------- drop = 5 (added for octave compatibility, 2-norm based tolerance, Juha Heiskala         */
+	else if(drop == 5) {
+	  /*--------------------calculate two norms      */
+	  double Anorm = diag*diag;
+	  for (j=0; j < mt->L->nzcount[i]; j++) 
+	    Anorm += mt->L->ma[i][j]*mt->L->ma[i][j];
+	  
+	  for (j=0; j < mt->U->nzcount[i]; j++) {
+	    int col = mt->U->ja[i][j];
+	    mt_u_norm[col] += mt->U->ma[i][j]*mt->U->ma[i][j];
+	  }
+	  Anorm += mt_u_norm[i];
+	  
+	  Unorm = sqrt(Anorm);
+	  Lnorm = Unorm; ///diag;
+	  
+	  Lnorm *= tol;
+	  Unorm *= tol;
+	  std_drop(lfil,i,Lnorm,Unorm,0.0, milu);
+	}
         else {
+	  if (fp != NULL)
             fprintf(fp, "Invalid option for dropping ...\n");
-            exit(0);
+          exit(0);
         }
+	if (milu>0) {
+	  D[i] = 1.0/(1.0/D[i] + milu_rsum[i] + milu_csum[i]);
+	  for(j = 0; j < L->nzcount[i]; j++ ) {      
+	    L->ma[i][j] *=  D[i];
+	  }
+	}
         /*-------------------- update diagonals [after dropping option]        */
         /* DIAG-UPDATE-OPTION: COMMENT THE NEXT  LINE */
         if (DELAY_DIAG_UPD)
@@ -582,6 +635,7 @@ int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int d
             Llist[i] = Llist[row];
             Llist[row] = i;
         }
+	D[i] = 1.0/D[i];  
     }
     free(Lfirst);
     free(Llist);
@@ -597,5 +651,10 @@ int itsol_pc_ilutc(ITS_ILUSpar *mt, ITS_ILUSpar *lu, int lfil, double tol, int d
         free(eL);
         free(eU);
     }
+    if (milu>0) {
+      free(milu_csum);
+      free(milu_rsum);
+    }
+    free(mt_u_norm);
     return 0;
 }
