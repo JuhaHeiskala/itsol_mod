@@ -12,6 +12,7 @@ endif()
 file(GLOB SRCS src/*.c)
 
 add_library(ITSOL_2 SHARED ${SRCS} src/tools.f)
+set_property(TARGET ITSOL_2 PROPERTY C_STANDARD 99)
 
 target_link_libraries(ITSOL_2  ${LAPACK_LIBRARIES})
 target_include_directories(ITSOL_2 PUBLIC include)
