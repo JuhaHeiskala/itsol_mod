@@ -7,7 +7,7 @@ void itsol_solver_initialize(ITS_SOLVER *s, ITS_SOLVER_TYPE stype, ITS_PC_TYPE p
     assert(A != NULL);
 
     /* init */
-    bzero(s, sizeof(*s));
+    memset(s, 0, sizeof(*s));
 
     s->s_type = stype;
     s->A = A;
@@ -32,7 +32,7 @@ void itsol_solver_finalize(ITS_SOLVER *s)
 
     itsol_pc_finalize(&s->pc);
 
-    bzero(s, sizeof(*s));
+    memset(s, 0, sizeof(*s));
 }
 
 int itsol_solver_assemble(ITS_SOLVER *s)

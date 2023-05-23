@@ -2281,7 +2281,7 @@ ITS_CooMat itsol_read_coo(char *Fname)
        fscanf(matf," %d", &n); 
        fscanf(matf," %d", &nnz);  
      */
-    bzero(&A, sizeof(A));
+    memset(&A, 0, sizeof(A));
     A.n = n;
     A.nnz = nnz;
 
