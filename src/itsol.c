@@ -1,4 +1,4 @@
-
+#include <strings.h>
 #include "itsol.h"
 
 void itsol_solver_initialize(ITS_SOLVER *s, ITS_SOLVER_TYPE stype, ITS_PC_TYPE pctype, ITS_CooMat *A)
