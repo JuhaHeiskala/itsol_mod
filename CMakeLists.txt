@@ -3,9 +3,7 @@ project(ITSOL_2 C)
 enable_language(Fortran)
 
 
-if(JLL_BUILD)
-  include($ENV{prefix}/lib/cmake/lapack-3.9.0/lapack-config.cmake)
-else()
+if(NOT JLL_BUILD)
   find_package(LAPACK)
 endif()
 
@@ -14,7 +12,11 @@ file(GLOB SRCS src/*.c)
 add_library(ITSOL_2 SHARED ${SRCS} src/tools.f)
 set_property(TARGET ITSOL_2 PROPERTY C_STANDARD 99)
 
-target_link_libraries(ITSOL_2  ${LAPACK_LIBRARIES})
+if(JLL_BUILD)
+  target_link_libraries(ITSOL_2  blastrampoline)
+else()
+  target_link_libraries(ITSOL_2  ${LAPACK_LIBRARIES})
+endif()
 target_include_directories(ITSOL_2 PUBLIC include)
 
 install(TARGETS ITSOL_2)
